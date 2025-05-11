@@ -5,7 +5,7 @@ import os
 from termcolor import colored
 from concurrent.futures import ThreadPoolExecutor
 
-# Helper function to format dates with ordinal suffix (1st, 2nd, etc.)
+
 def format_date(date):
     day = date.day
     if 10 <= day <= 20:
@@ -14,7 +14,7 @@ def format_date(date):
         suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
     return date.strftime(f"{day}{suffix} %B %Y")
 
-# Function to check the latest payment, card status, and Nitro subscription status
+
 def check_latest_payment(token, proxy=None):
     headers = {
         "Authorization": token.strip(),
@@ -26,7 +26,7 @@ def check_latest_payment(token, proxy=None):
     proxies = {"http": proxy, "https": proxy} if proxy else {}
 
     try:
-        # Fetch latest payment data
+        
         response = requests.get(url, headers=headers, proxies=proxies)
         if response.status_code == 200:
             data = response.json()
@@ -34,39 +34,39 @@ def check_latest_payment(token, proxy=None):
                 print(f"[{token[:30]}...] ❌ No payment records found.")
                 return
 
-            # Get the latest payment date
+           
             latest_payment = max(data, key=lambda p: p["created_at"])
             created_at = latest_payment["created_at"]
             created_at = datetime.fromisoformat(created_at) if isinstance(created_at, str) else created_at
 
-            # Convert created_at to UTC aware datetime if it is naive
+            
             if created_at.tzinfo is None:
                 created_at = pytz.utc.localize(created_at)
 
-            # Get current UTC time
+           
             current_time = datetime.now(pytz.utc)
 
-            # Calculate the difference in days between the latest payment and current date
+           
             days_since_payment = (current_time - created_at).days
 
-            # Fetch the Nitro subscription status
+           
             nitro_url = "https://discord.com/api/v9/users/@me/billing/subscriptions"
             nitro_response = requests.get(nitro_url, headers=headers, proxies=proxies)
             nitro_active = False
             if nitro_response.status_code == 200:
                 nitro_data = nitro_response.json()
-                # Check if there's any active Nitro subscription
+                
                 for subscription in nitro_data:
-                    if subscription["type"] == 1:  # Nitro Classic is type 1, Nitro is type 2
+                    if subscription["type"] == 1:  
                         nitro_active = True
                         break
 
-            # If Nitro is active or the payment is within the last 30 days, mark as Ineligible
+            
             if nitro_active or days_since_payment < 30:
                 print(colored(f"Ineligible - {token[:30]}...", 'red'))
                 return "Ineligible"
 
-            # Check for payment sources (cards)
+            
             card_url = "https://discord.com/api/v9/users/@me/billing/payment-sources"
             card_response = requests.get(card_url, headers=headers, proxies=proxies)
             if card_response.status_code == 200:
@@ -75,7 +75,7 @@ def check_latest_payment(token, proxy=None):
                     for card in card_data:
                         card_status = card.get('valid', False)
                         card_used = card.get('used', False)
-                        # If the card is invalid and payment is outdated, mark as Eligible
+                        
                         if days_since_payment >= 30 and not card_status:
                             print(colored(f"Eligible - {token[:30]}...", 'green'))
                             return "Eligible"
@@ -88,7 +88,7 @@ def check_latest_payment(token, proxy=None):
 
 from concurrent.futures import ThreadPoolExecutor
 
-# Function to process the tokens and check payments in parallel with real-time updates
+
 def check_payments_in_parallel(tokens_file, output_file, proxy=None, max_workers=5):
     eligible_tokens = []
     ineligible_tokens = []
@@ -96,23 +96,23 @@ def check_payments_in_parallel(tokens_file, output_file, proxy=None, max_workers
     with open(tokens_file, 'r') as f:
         tokens = [line.strip() for line in f.readlines()]
 
-    # Open the output file for writing
+   
     with open(output_file, 'a') as output:
-        # Process tokens in parallel
+       
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = executor.map(lambda token: check_latest_payment(token, proxy), tokens)
 
 
-            # Write results to output file and print status
+            
             for result, token in zip(results, tokens):
                 if result == "Eligible":
                     eligible_tokens.append(token)
                     output.write(f"Eligible - {token[:30]}...\n")
-                    print(f"Eligible - {token[:30]}...")  # Print to console
+                    print(f"Eligible - {token[:30]}...")  
                 elif result == "Ineligible":
                     ineligible_tokens.append(token)
                     output.write(f"Ineligible - {token[:30]}...\n")
-                    print(f"Ineligible - {token[:30]}...")  # Print to console
+                    print(f"Ineligible - {token[:30]}...") 
 
 
 proxy = ""
