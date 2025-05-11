@@ -9,3 +9,11 @@ Tokens marked as Eligible can successfully claim Nitro gifts and act just like r
 
 
 no skidding pls 🙏
+
+| Condition                                                     | Result       |
+| ------------------------------------------------------------- | ------------ |
+| No payment history                                            | Ineligible ❌ |
+| Last payment < 30 days ago                                    | Ineligible ❌ |
+| Has active Nitro subscription                                 | Ineligible ❌ |
+| Has **invalid card** + last payment >= 30 days ago + no Nitro | ✅ Eligible   |
+| Has **only valid card(s)** or no card at all                  | Ineligible ❌ |
