@@ -1,20 +1,20 @@
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import os
-import random
 from termcolor import colored
 from concurrent.futures import ThreadPoolExecutor
 
-def load_list(filename):
-    with open(filename, 'r') as f:
-        return [line.strip() for line in f if line.strip()]
-
+# Helper function to format dates with ordinal suffix (1st, 2nd, etc.)
 def format_date(date):
     day = date.day
-    suffix = 'th' if 10 <= day <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+    if 10 <= day <= 20:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
     return date.strftime(f"{day}{suffix} %B %Y")
 
+# Function to check the latest payment, card status, and Nitro subscription status
 def check_latest_payment(token, proxy=None):
     headers = {
         "Authorization": token.strip(),
@@ -22,83 +22,98 @@ def check_latest_payment(token, proxy=None):
         "User-Agent": "Discord/150000 CFNetwork/1333.0.4 Darwin/21.5.0"
     }
 
+    url = "https://discord.com/api/v9/users/@me/billing/payments?limit=30"
     proxies = {"http": proxy, "https": proxy} if proxy else {}
 
     try:
-        url = "https://discord.com/api/v9/users/@me/billing/payments?limit=30"
-        response = requests.get(url, headers=headers, proxies=proxies, timeout=10)
-        if response.status_code != 200:
-            print(f"[{token[:30]}...] ❌ Failed to get payment records.")
-            return None
+        # Fetch latest payment data
+        response = requests.get(url, headers=headers, proxies=proxies)
+        if response.status_code == 200:
+            data = response.json()
+            if not data:
+                print(f"[{token[:30]}...] ❌ No payment records found.")
+                return
 
-        data = response.json()
-        if not data:
-            print(f"[{token[:30]}...] ❌ No payment history.")
-            return None
+            # Get the latest payment date
+            latest_payment = max(data, key=lambda p: p["created_at"])
+            created_at = latest_payment["created_at"]
+            created_at = datetime.fromisoformat(created_at) if isinstance(created_at, str) else created_at
 
-        latest_payment = max(data, key=lambda p: p["created_at"])
-        created_at = latest_payment["created_at"]
-        created_at = datetime.fromisoformat(created_at) if isinstance(created_at, str) else created_at
-        if created_at.tzinfo is None:
-            created_at = pytz.utc.localize(created_at)
+            # Convert created_at to UTC aware datetime if it is naive
+            if created_at.tzinfo is None:
+                created_at = pytz.utc.localize(created_at)
 
-        current_time = datetime.now(pytz.utc)
-        days_since_payment = (current_time - created_at).days
+            # Get current UTC time
+            current_time = datetime.now(pytz.utc)
 
-        nitro_url = "https://discord.com/api/v9/users/@me/billing/subscriptions"
-        nitro_response = requests.get(nitro_url, headers=headers, proxies=proxies, timeout=10)
-        nitro_active = False
-        if nitro_response.status_code == 200:
-            for sub in nitro_response.json():
-                if sub.get("type") in (1, 2):
-                    nitro_active = True
-                    break
+            # Calculate the difference in days between the latest payment and current date
+            days_since_payment = (current_time - created_at).days
 
-        if nitro_active or days_since_payment < 30:
-            return "Ineligible"
+            # Fetch the Nitro subscription status
+            nitro_url = "https://discord.com/api/v9/users/@me/billing/subscriptions"
+            nitro_response = requests.get(nitro_url, headers=headers, proxies=proxies)
+            nitro_active = False
+            if nitro_response.status_code == 200:
+                nitro_data = nitro_response.json()
+                # Check if there's any active Nitro subscription
+                for subscription in nitro_data:
+                    if subscription["type"] == 1:  # Nitro Classic is type 1, Nitro is type 2
+                        nitro_active = True
+                        break
 
-        card_url = "https://discord.com/api/v9/users/@me/billing/payment-sources"
-        card_response = requests.get(card_url, headers=headers, proxies=proxies, timeout=10)
-        if card_response.status_code == 200:
-            for card in card_response.json():
-                if not card.get('valid', False):
-                    return "Eligible"
+            # If Nitro is active or the payment is within the last 30 days, mark as Ineligible
+            if nitro_active or days_since_payment < 30:
+                print(colored(f"Ineligible - {token[:30]}...", 'red'))
+                return "Ineligible"
 
-        print(f"[{token[:30]}...] ❌ No usable card found.")
+            # Check for payment sources (cards)
+            card_url = "https://discord.com/api/v9/users/@me/billing/payment-sources"
+            card_response = requests.get(card_url, headers=headers, proxies=proxies)
+            if card_response.status_code == 200:
+                card_data = card_response.json()
+                if card_data:
+                    for card in card_data:
+                        card_status = card.get('valid', False)
+                        card_used = card.get('used', False)
+                        # If the card is invalid and payment is outdated, mark as Eligible
+                        if days_since_payment >= 30 and not card_status:
+                            print(colored(f"Eligible - {token[:30]}...", 'green'))
+                            return "Eligible"
+
+        print(f"[{token[:30]}...] ❌ Failed to fetch data or card details.")
         return None
-
     except Exception as e:
-        print(f"[{token[:30]}...] ❌ Error: {e}")
+        print(f"[{token[:30]}...] ❌ An error occurred: {str(e)}")
         return None
 
-def check_payments_in_parallel(tokens_file, proxies_file, output_dir=".", max_workers=10):
-    tokens = load_list(tokens_file)
-    proxies = load_list(proxies_file)
+from concurrent.futures import ThreadPoolExecutor
 
-    eligible_path = os.path.join(output_dir, "eligible.txt")
-    ineligible_path = os.path.join(output_dir, "ineligible.txt")
-    log_path = os.path.join(output_dir, "output.txt")
+# Function to process the tokens and check payments in parallel with real-time updates
+def check_payments_in_parallel(tokens_file, output_file, proxy=None, max_workers=5):
+    eligible_tokens = []
+    ineligible_tokens = []
 
-    with open(eligible_path, 'w') as eligible_file, \
-         open(ineligible_path, 'w') as ineligible_file, \
-         open(log_path, 'w') as log_file:
+    with open(tokens_file, 'r') as f:
+        tokens = [line.strip() for line in f.readlines()]
 
+    # Open the output file for writing
+    with open(output_file, 'a') as output:
+        # Process tokens in parallel
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = executor.map(
-                lambda token: (check_latest_payment(token, random.choice(proxies)), token),
-                tokens
-            )
+            results = executor.map(lambda token: check_latest_payment(token, proxy), tokens)
 
-            for result, token in results:
-                line = f"{result} - {token[:30]}...\n"
+
+            # Write results to output file and print status
+            for result, token in zip(results, tokens):
                 if result == "Eligible":
-                    eligible_file.write(token + '\n')
-                    log_file.write(line)
-                    print(colored(f"Eligible - {token[:30]}...", 'green'))
+                    eligible_tokens.append(token)
+                    output.write(f"Eligible - {token[:30]}...\n")
+                    print(f"Eligible - {token[:30]}...")  # Print to console
                 elif result == "Ineligible":
-                    ineligible_file.write(token + '\n')
-                    log_file.write(line)
-                    print(colored(f"Ineligible - {token[:30]}...", 'red'))
+                    ineligible_tokens.append(token)
+                    output.write(f"Ineligible - {token[:30]}...\n")
+                    print(f"Ineligible - {token[:30]}...")  # Print to console
 
-if __name__ == "__main__":
-    check_payments_in_parallel('tokens.txt', 'proxies.txt', '.', max_workers=10)
+
+proxy = ""
+check_payments_in_parallel('tokens.txt', 'output.txt', proxy, max_workers=10)
