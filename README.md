@@ -6,6 +6,7 @@ Tokens marked as Eligible can successfully claim Nitro gifts and act just like r
 🔧 Fast, multi-threaded, proxy-supported checker
 📄 Input: tokens.txt + proxies.txt
 📝 Output: output.txt (Eligible / Ineligible)
+add proxy in checkerr.py last line
 
 
 no skidding pls 🙏
